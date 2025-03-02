@@ -232,6 +232,16 @@
       The addition of the full-length IV is an enhancement to help mitigate potential human errors—such as accidentally reusing a key—by ensuring that the ciphertext is different even when the same plaintext and key are used repeatedly. However, if used properly (with a truly random key used only once), the method remains a one time pad, offering perfect secrecy.
     </p>
     
+    <h3>Additional Explanation: Observing Repeating "00" Patterns</h3>
+    <p>
+      When both the plaintext and the key consist solely of the character "a", the encryption behaves in a predictable way. Since the ASCII code for "a" is 97, the XOR of the plaintext and key characters is <code>97 XOR 97 = 0</code>. As a result, the encryption simplifies to:
+      <br>
+      <code>encryptedChar = 0 XOR ivChar = ivChar</code>.
+    </p>
+    <p>
+      This means that the ciphertext is essentially the IV itself. Each IV character is then converted into a 4-digit hexadecimal string. Smaller values (like 0) are padded with leading zeros (e.g., 0 becomes <code>"0000"</code>), which is why you see consistent "00" patterns in the output.
+    </p>
+    
     <h3>Summary</h3>
     <p>
       This enhanced one time pad encryptor/decryptor:
@@ -246,4 +256,5 @@
   </div>
 </body>
 </html>
+
 
