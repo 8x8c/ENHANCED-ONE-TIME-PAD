@@ -19,6 +19,6 @@ Even though a true OTP does not require an IV, adding a full-length random IV he
 
 # Usage in Practice:
 
-While this tool is a great demonstration of the OTP concept and encryption fundamentals, it’s primarily educational. In real-world applications, careful key management and additional security measures would be needed. Rust lang is probably the most reliable lang to make encryption apps with. 
+While this tool is a great demonstration of the OTP concept and encryption fundamentals, it’s primarily educational. In real-world applications, careful key management and additional security measures would be needed. Rust lang is far superior to this js app.
 
 
