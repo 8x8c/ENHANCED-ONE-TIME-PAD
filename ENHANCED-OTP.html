@@ -10,12 +10,13 @@
     button { margin-right: 10px; padding: 10px 20px; }
     .explanation { margin-top: 40px; padding: 20px; border-top: 1px solid #ccc; }
     pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+    #errorMsg { color: red; margin-top: 10px; }
   </style>
 </head>
 <body>
   <h1>Enhanced One Time Pad Encrypt/Decrypt</h1>
   <p>
-    Enter your text and a key. The key must be at least as long as the text. In this version, a random IV (initialization vector) is generated that is as long as the plaintext. For encryption, each character of the plaintext is XORed with the corresponding character of both the key and the IV. The IV (encoded in hex) is prepended to the ciphertext so that decryption is possible.
+    Enter your text and a key. The key must be at least as long as the text. In this version, a random IV (initialization vector) is generated that is as long as the plaintext. For encryption, each character of the plaintext is XORed with the corresponding character of both the key and the IV. The IV (encoded in hex) is prepended to the ciphertext, then an HMAC (for integrity) is appended, so that decryption is possible.
   </p>
   
   <label for="inputText">Input Text (Plaintext for encryption, hex ciphertext for decryption):</label>
@@ -25,14 +26,51 @@
   <textarea id="keyInput" placeholder="Extra key characters beyond the text length will be ignored"></textarea>
   
   <div>
-    <button onclick="encrypt()">Encrypt</button>
-    <button onclick="decrypt()">Decrypt</button>
+    <button id="encryptButton">Encrypt</button>
+    <button id="decryptButton">Decrypt</button>
   </div>
+  
+  <div id="errorMsg"></div>
   
   <label for="outputText">Output:</label>
   <textarea id="outputText" readonly></textarea>
   
   <script>
+    // Utility functions
+    function displayError(msg) {
+      document.getElementById("errorMsg").textContent = msg;
+    }
+    
+    function clearError() {
+      document.getElementById("errorMsg").textContent = "";
+    }
+    
+    // Convert an ArrayBuffer to a hex string.
+    function bufferToHex(buffer) {
+      const byteArray = new Uint8Array(buffer);
+      let hexString = "";
+      for (let i = 0; i < byteArray.length; i++) {
+        hexString += byteArray[i].toString(16).padStart(2, '0');
+      }
+      return hexString;
+    }
+    
+    // Compute HMAC-SHA256 of a message using the provided key.
+    async function computeHMAC(message, keyStr) {
+      const encoder = new TextEncoder();
+      const keyBuffer = encoder.encode(keyStr);
+      const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        keyBuffer,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const messageBuffer = encoder.encode(message);
+      const signature = await crypto.subtle.sign("HMAC", cryptoKey, messageBuffer);
+      return bufferToHex(signature);
+    }
+    
     // Generate a secure random IV with the given length (number of characters)
     function generateIV(length) {
       const ivArray = new Uint8Array(length);
@@ -43,7 +81,7 @@
       }
       return iv;
     }
-  
+    
     // Convert a string to a hex string (4 hex digits per character)
     function toHex(str) {
       let hex = "";
@@ -52,7 +90,7 @@
       }
       return hex;
     }
-  
+    
     // Convert a hex string back to a string (assumes 4 hex digits per character)
     function fromHex(hexStr) {
       let str = "";
@@ -61,119 +99,151 @@
       }
       return str;
     }
-  
+    
     // Validate lengths:
     // For encryption: key must be at least as long as the plaintext.
-    // For decryption: the ciphertext must be a multiple of 8 hex digits.
-    // Since the encryption outputs IV and message (each character converted to 4 hex digits),
-    // the total ciphertext length is 8 * (plaintext length).
+    // For decryption: the ciphertext must be a multiple of 8 hex digits plus a 64-digit HMAC.
     function validateLength(text, key, isDecrypt = false) {
       if (isDecrypt) {
-        if (text.length % 8 !== 0) {
-          alert("Ciphertext length must be a multiple of 8 hex digits.");
+        if (text.length < 64 || ((text.length - 64) % 8 !== 0)) {
+          displayError("Ciphertext length is invalid.");
           return false;
         }
-        let plaintextLength = text.length / 8;
+        let plaintextLength = (text.length - 64) / 8;
         if (key.length < plaintextLength) {
-          alert("For decryption, the key must be at least as long as the plaintext.");
+          displayError("For decryption, the key must be at least as long as the plaintext.");
           return false;
         }
       } else {
         if (text.length > key.length) {
-          alert("For encryption, the key must be at least as long as the text.");
+          displayError("For encryption, the key must be at least as long as the text.");
           return false;
         }
       }
       return true;
     }
-  
-    // Encrypt:
-    // 1. Generate an IV that is exactly as long as the plaintext.
-    // 2. For each character, compute:
-    //    ciphertextChar = plaintextChar XOR keyChar XOR ivChar
-    // 3. Convert both the IV and the ciphertext to hex (4 digits per character)
-    // 4. Prepend the IV (in hex) to the ciphertext.
-    function encrypt() {
-      const plaintext = document.getElementById("inputText").value;
-      // Remove newline characters from the key for consistency
-      const rawKey = document.getElementById("keyInput").value;
-      const key = rawKey.replace(/\r?\n/g, "");
-      
-      if (!validateLength(plaintext, key)) return;
-      
-      const iv = generateIV(plaintext.length);
-      const ivHex = toHex(iv);
-  
-      let encryptedHex = "";
-      for (let i = 0; i < plaintext.length; i++) {
-        const plainChar = plaintext.charCodeAt(i);
-        const keyChar = key.charCodeAt(i);
-        const ivChar = iv.charCodeAt(i);
-        const encryptedChar = plainChar ^ keyChar ^ ivChar;
-        encryptedHex += encryptedChar.toString(16).padStart(4, '0');
+    
+    // Encrypt: (now an async function to handle HMAC)
+    async function encrypt() {
+      clearError();
+      try {
+        const plaintext = document.getElementById("inputText").value;
+        // Sanitize key: remove newlines and trim whitespace
+        const rawKey = document.getElementById("keyInput").value;
+        const key = rawKey.replace(/\r?\n/g, "").trim();
+        
+        if (!validateLength(plaintext, key)) return;
+        
+        const iv = generateIV(plaintext.length);
+        const ivHex = toHex(iv);
+    
+        let encryptedHex = "";
+        for (let i = 0; i < plaintext.length; i++) {
+          const plainChar = plaintext.charCodeAt(i);
+          const keyChar = key.charCodeAt(i);
+          const ivChar = iv.charCodeAt(i);
+          const encryptedChar = plainChar ^ keyChar ^ ivChar;
+          encryptedHex += encryptedChar.toString(16).padStart(4, '0');
+        }
+    
+        // Prepare the message part (IV + encrypted message)
+        const messagePart = ivHex + encryptedHex;
+        // Compute HMAC for integrity (HMAC-SHA256 produces 32 bytes => 64 hex digits)
+        const hmacHex = await computeHMAC(messagePart, key);
+    
+        // Final output: IV + encrypted message + HMAC
+        document.getElementById("outputText").value = messagePart + hmacHex;
+      } catch (e) {
+        displayError("Encryption error: " + e.message);
       }
-  
-      // Prepend the IV (in hex) to the encrypted message.
-      document.getElementById("outputText").value = ivHex + encryptedHex;
     }
-  
-    // Decrypt:
-    // 1. Determine the plaintext length from the ciphertext.
-    //    Since the ciphertext is (IV + encrypted message) and each character is 4 hex digits,
-    //    the total length is 8 * (plaintext length). Thus, plaintextLength = ciphertext.length / 8.
-    // 2. Extract the IV from the beginning of the ciphertext.
-    // 3. Use the IV and the key to XOR-decrypt the rest of the ciphertext.
-    function decrypt() {
-      const inputText = document.getElementById("inputText").value;
-      // Remove newline characters from the key for consistency
-      const rawKey = document.getElementById("keyInput").value;
-      const key = rawKey.replace(/\r?\n/g, "");
-      
-      if (!validateLength(inputText, key, true)) return;
-      
-      // Determine plaintext length from ciphertext.
-      let plaintextLength = inputText.length / 8;
-  
-      // IV is the first plaintextLength characters (hex-encoded, so 4 digits per char)
-      let ivHexLength = plaintextLength * 4;
-      const ivHex = inputText.substring(0, ivHexLength);
-      const iv = fromHex(ivHex);
-      const encryptedHex = inputText.substring(ivHexLength);
-  
-      let decryptedText = "";
-      for (let i = 0; i < plaintextLength; i++) {
-        const hexPart = encryptedHex.substr(i * 4, 4);
-        const encryptedChar = parseInt(hexPart, 16);
-        const keyChar = key.charCodeAt(i);
-        const ivChar = iv.charCodeAt(i);
-        const plainChar = encryptedChar ^ keyChar ^ ivChar;
-        decryptedText += String.fromCharCode(plainChar);
+    
+    // Decrypt: (async to handle HMAC verification)
+    async function decrypt() {
+      clearError();
+      try {
+        const inputText = document.getElementById("inputText").value;
+        // Sanitize key: remove newlines and trim whitespace
+        const rawKey = document.getElementById("keyInput").value;
+        const key = rawKey.replace(/\r?\n/g, "").trim();
+        
+        if (!validateLength(inputText, key, true)) return;
+        
+        // Separate the HMAC from the message.
+        const hmacExtracted = inputText.slice(-64);
+        const messagePart = inputText.slice(0, -64);
+        
+        // Verify HMAC integrity.
+        const computedHMAC = await computeHMAC(messagePart, key);
+        if (computedHMAC !== hmacExtracted) {
+          displayError("Integrity check failed: The ciphertext has been tampered with or the key is incorrect.");
+          return;
+        }
+        
+        // Compute plaintext length: messagePart is IV + encrypted message
+        // IV: (plaintextLength * 4 hex digits), encrypted message: (plaintextLength * 4 hex digits)
+        // Thus, plaintextLength = messagePart.length / 8.
+        let plaintextLength = messagePart.length / 8;
+        
+        // Extract IV (first plaintextLength characters encoded in hex)
+        let ivHexLength = plaintextLength * 4;
+        const ivHex = messagePart.substring(0, ivHexLength);
+        const iv = fromHex(ivHex);
+        const encryptedHex = messagePart.substring(ivHexLength);
+    
+        let decryptedText = "";
+        for (let i = 0; i < plaintextLength; i++) {
+          const hexPart = encryptedHex.substr(i * 4, 4);
+          const encryptedChar = parseInt(hexPart, 16);
+          const keyChar = key.charCodeAt(i);
+          const ivChar = iv.charCodeAt(i);
+          const plainChar = encryptedChar ^ keyChar ^ ivChar;
+          decryptedText += String.fromCharCode(plainChar);
+        }
+        document.getElementById("outputText").value = decryptedText;
+      } catch (e) {
+        displayError("Decryption error: " + e.message);
       }
-      document.getElementById("outputText").value = decryptedText;
     }
+    
+    // Attach event listeners after DOM loads and check for crypto support.
+    document.addEventListener("DOMContentLoaded", function() {
+      if (!(window.crypto && window.crypto.getRandomValues && window.crypto.subtle)) {
+        displayError("Your browser does not support the required cryptographic functions.");
+        document.getElementById("encryptButton").disabled = true;
+        document.getElementById("decryptButton").disabled = true;
+        return;
+      }
+      document.getElementById("encryptButton").addEventListener("click", encrypt);
+      document.getElementById("decryptButton").addEventListener("click", decrypt);
+    });
   </script>
   
   <div class="explanation">
     <h2>Comprehensive Explanation</h2>
+    
     <h3>Overview of the API & Implementation</h3>
     <p>
-      This web application is built using HTML5 and JavaScript. The encryption and decryption are performed entirely in the browser. Key functions include:
+      This web application is built using HTML5 and JavaScript. Encryption and decryption are performed entirely in the browser using a one time pad (OTP) method enhanced with a full-length random IV and an HMAC for data integrity. The code leverages modern browser crypto APIs.
     </p>
     <ul>
       <li>
-        <strong>window.crypto.getRandomValues:</strong> Used to generate a cryptographically secure random IV (initialization vector).
+        <strong>window.crypto.getRandomValues:</strong> Generates a cryptographically secure random IV.
       </li>
       <li>
-        <strong>XOR Operation:</strong> The core of the one time pad (OTP) method, where each character of the plaintext is XORed with the corresponding key character.
+        <strong>window.crypto.subtle:</strong> Used to compute an HMAC-SHA256 to verify data integrity.
       </li>
       <li>
-        <strong>Hex Encoding:</strong> Each character (after XOR) is converted to a 4-digit hexadecimal representation to support the full Unicode range.
+        <strong>XOR Operation:</strong> Each character of the plaintext is XORed with the corresponding key character and IV character.
+      </li>
+      <li>
+        <strong>Hex Encoding:</strong> Every character is converted to a 4-digit hexadecimal value for full Unicode support.
       </li>
     </ul>
     
     <h3>One Time Pad (OTP) Method</h3>
     <p>
-      A one time pad is an encryption technique that uses a key which is as long as the message. The security of an OTP is perfect (information-theoretic) when:
+      A one time pad uses a key that is as long as the message. When the key is truly random, used only once, and kept secret, OTP offers perfect secrecy.
     </p>
     <ul>
       <li>The key is truly random.</li>
@@ -181,85 +251,36 @@
       <li>The key is used only once.</li>
       <li>The key is kept completely secret.</li>
     </ul>
-    <p>
-      The encryption is done using the XOR operation because XOR is its own inverse; this means that applying the same operation a second time with the same key recovers the original plaintext.
-    </p>
     
-    <h3>Enhanced IV (Initialization Vector)</h3>
+    <h3>Enhanced IV (Initialization Vector) & HMAC</h3>
     <p>
-      In a pure OTP, if the key is truly random, an IV is not necessary. However, to safeguard against accidental key reuse or situations where the plaintext and key might be similar, an IV is added as an enhancement:
+      Although a pure OTP doesn’t require an IV, this implementation uses a full-length IV to protect against accidental key reuse and to further randomize the ciphertext. The IV (converted to hex) is prepended to the ciphertext.
     </p>
-    <ul>
-      <li>
-        <strong>Full-Length IV:</strong> A random IV is generated that is exactly as long as the plaintext. This means each character position gets a unique random value.
-      </li>
-      <li>
-        <strong>XOR Combination:</strong> For each character, the encryption is computed as:
-        <br>
-        <code>ciphertextChar = plaintextChar XOR keyChar XOR ivChar</code>
-      </li>
-      <li>
-        The IV is generated using <code>window.crypto.getRandomValues</code>, ensuring high-quality randomness.
-      </li>
-      <li>
-        The IV (converted to hex) is prepended to the ciphertext so that it can be used during decryption.
-      </li>
-    </ul>
     <p>
-      This extra randomness helps ensure that even if the same plaintext and key are accidentally reused, the ciphertext will still be different each time.
+      To ensure that the data has not been tampered with, an HMAC-SHA256 is computed over the combined IV and encrypted message. This HMAC (a 64-digit hex string) is appended to the ciphertext and verified during decryption.
     </p>
     
     <h3>Allowed Key Characters & Key Sanitization</h3>
     <p>
-      The key can include any character or symbol found on a standard keyboard. In this implementation, the allowed characters are the standard printable ASCII characters. These are:
+      The key can include any of the 95 printable ASCII characters. However, newline characters (which might be inserted due to text wrapping on smaller browsers) are automatically removed and extra whitespace trimmed to guarantee consistency across devices.
     </p>
-    <pre>
- !"#$%&amp;'()*+,-./0123456789:;&lt;=&gt;?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
-    </pre>
+    
+    <h3>Error Handling & Event Management</h3>
     <p>
-      There are a total of <strong>95</strong> printable ASCII characters. However, newline characters can be introduced unintentionally due to text wrapping or different browser sizes. To ensure the key remains consistent across devices, newline characters are automatically removed.
+      To improve reliability, error messages are displayed within the page rather than using alert dialogs. Operations are wrapped in try/catch blocks to catch and report any unexpected errors. Additionally, event listeners are attached after the DOM loads, and the application verifies that the browser supports the required cryptographic functions.
     </p>
     
     <h3>Overall Security & Methodology</h3>
     <p>
-      While this implementation demonstrates the core mathematical operation of a one time pad, perfect secrecy is only guaranteed if the key is:
+      This production-enhanced tool:
     </p>
     <ul>
-      <li>Truly random.</li>
-      <li>At least as long as the plaintext.</li>
-      <li>Used only once.</li>
-      <li>Kept completely secret.</li>
-    </ul>
-    <p>
-      The addition of the full-length IV is an enhancement to help mitigate potential human errors—such as accidentally reusing a key—by ensuring that the ciphertext is different even when the same plaintext and key are used repeatedly. However, if used properly (with a truly random key used only once), the method remains a one time pad, offering perfect secrecy.
-    </p>
-    
-    <h3>Additional Explanation: Observing Repeating "00" Patterns</h3>
-    <p>
-      When both the plaintext and the key consist solely of the character "a", the encryption behaves in a predictable way. Since the ASCII code for "a" is 97, the XOR of the plaintext and key characters is <code>97 XOR 97 = 0</code>. As a result, the encryption simplifies to:
-      <br>
-      <code>encryptedChar = 0 XOR ivChar = ivChar</code>.
-    </p>
-    <p>
-      This means that the ciphertext is essentially the IV itself. Each IV character is then converted into a 4-digit hexadecimal string. Smaller values (like 0) are padded with leading zeros (e.g., 0 becomes <code>"0000"</code>), which is why you see consistent "00" patterns in the output.
-    </p>
-    
-    <h3>Key Sanitization: Removing Newline Characters</h3>
-    <p>
-      Newline characters in the key can be inadvertently introduced by browsers with smaller windows or due to soft/hard wrapping in textareas. Since newlines might differ between devices, they could alter the intended key value. To ensure consistency, newline characters are removed from the key before encryption and decryption. This avoids any unintended key modifications and guarantees that the same key is used regardless of browser or device.
-    </p>
-    
-    <h3>Summary</h3>
-    <p>
-      This enhanced one time pad encryptor/decryptor:
-    </p>
-    <ul>
-      <li>Uses HTML5 and JavaScript, leveraging the browser’s secure crypto API.</li>
-      <li>Encrypts by XORing each character of the plaintext with the corresponding key character and a full-length random IV.</li>
-      <li>Outputs a hex-encoded ciphertext (with 4 hex digits per character) where the IV is prepended to the encrypted message.</li>
-      <li>Supports any standard keyboard characters for the key – a total of 95 printable ASCII characters.</li>
-      <li>Automatically removes newline characters from the key to ensure consistent behavior across different browsers and devices.</li>
-      <li>Remains a one time pad (and thus perfectly secure) when the key is truly random, used only once, and kept secret, with the IV acting as an extra safeguard.</li>
+      <li>Encrypts data by XORing the plaintext with both a user-supplied key and a full-length random IV.</li>
+      <li>Uses hex encoding (4 digits per character) for full Unicode support.</li>
+      <li>Appends an HMAC-SHA256 for data integrity verification.</li>
+      <li>Automatically sanitizes the key to remove unintended newline characters and extra spaces.</li>
+      <li>Provides robust error handling and feedback within the user interface.</li>
+      <li>Attaches event listeners in a maintainable way and checks for necessary crypto support.</li>
     </ul>
   </div>
 </body>
