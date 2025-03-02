@@ -95,7 +95,9 @@
     // 4. Prepend the IV (in hex) to the ciphertext.
     function encrypt() {
       const plaintext = document.getElementById("inputText").value;
-      const key = document.getElementById("keyInput").value;
+      // Remove newline characters from the key for consistency
+      const rawKey = document.getElementById("keyInput").value;
+      const key = rawKey.replace(/\r?\n/g, "");
       
       if (!validateLength(plaintext, key)) return;
       
@@ -123,8 +125,10 @@
     // 3. Use the IV and the key to XOR-decrypt the rest of the ciphertext.
     function decrypt() {
       const inputText = document.getElementById("inputText").value;
-      const key = document.getElementById("keyInput").value;
-  
+      // Remove newline characters from the key for consistency
+      const rawKey = document.getElementById("keyInput").value;
+      const key = rawKey.replace(/\r?\n/g, "");
+      
       if (!validateLength(inputText, key, true)) return;
       
       // Determine plaintext length from ciphertext.
@@ -205,7 +209,7 @@
       This extra randomness helps ensure that even if the same plaintext and key are accidentally reused, the ciphertext will still be different each time.
     </p>
     
-    <h3>Allowed Key Characters</h3>
+    <h3>Allowed Key Characters & Key Sanitization</h3>
     <p>
       The key can include any character or symbol found on a standard keyboard. In this implementation, the allowed characters are the standard printable ASCII characters. These are:
     </p>
@@ -213,7 +217,7 @@
  !"#$%&amp;'()*+,-./0123456789:;&lt;=&gt;?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
     </pre>
     <p>
-      There are a total of <strong>95</strong> printable ASCII characters. This range includes uppercase and lowercase letters, digits, punctuation marks, and various special symbols.
+      There are a total of <strong>95</strong> printable ASCII characters. However, newline characters can be introduced unintentionally due to text wrapping or different browser sizes. To ensure the key remains consistent across devices, newline characters are automatically removed.
     </p>
     
     <h3>Overall Security & Methodology</h3>
@@ -240,6 +244,11 @@
       This means that the ciphertext is essentially the IV itself. Each IV character is then converted into a 4-digit hexadecimal string. Smaller values (like 0) are padded with leading zeros (e.g., 0 becomes <code>"0000"</code>), which is why you see consistent "00" patterns in the output.
     </p>
     
+    <h3>Key Sanitization: Removing Newline Characters</h3>
+    <p>
+      Newline characters in the key can be inadvertently introduced by browsers with smaller windows or due to soft/hard wrapping in textareas. Since newlines might differ between devices, they could alter the intended key value. To ensure consistency, newline characters are removed from the key before encryption and decryption. This avoids any unintended key modifications and guarantees that the same key is used regardless of browser or device.
+    </p>
+    
     <h3>Summary</h3>
     <p>
       This enhanced one time pad encryptor/decryptor:
@@ -249,6 +258,7 @@
       <li>Encrypts by XORing each character of the plaintext with the corresponding key character and a full-length random IV.</li>
       <li>Outputs a hex-encoded ciphertext (with 4 hex digits per character) where the IV is prepended to the encrypted message.</li>
       <li>Supports any standard keyboard characters for the key – a total of 95 printable ASCII characters.</li>
+      <li>Automatically removes newline characters from the key to ensure consistent behavior across different browsers and devices.</li>
       <li>Remains a one time pad (and thus perfectly secure) when the key is truly random, used only once, and kept secret, with the IV acting as an extra safeguard.</li>
     </ul>
   </div>
