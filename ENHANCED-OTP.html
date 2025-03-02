@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -63,24 +64,16 @@
   
     // Validate lengths:
     // For encryption: key must be at least as long as the plaintext.
-    // For decryption: the ciphertext consists of an IV (with length = plaintext length encoded as 4 hex digits each)
-    // plus the encrypted message, so we derive the plaintext length from the key.
+    // For decryption: the ciphertext must be a multiple of 8 hex digits.
+    // Since the encryption outputs IV and message (each character converted to 4 hex digits),
+    // the total ciphertext length is 8 * (plaintext length).
     function validateLength(text, key, isDecrypt = false) {
       if (isDecrypt) {
-        // For decryption, we expect the IV to be as long as the plaintext.
-        // Since each character is encoded as 4 hex digits, the IV occupies (plaintext.length * 4) hex digits.
-        // We assume the key length equals the plaintext length.
-        let expectedIVHexLength = key.length * 4;
-        if (text.length < expectedIVHexLength) {
-          alert("Ciphertext is too short to contain the IV.");
+        if (text.length % 8 !== 0) {
+          alert("Ciphertext length must be a multiple of 8 hex digits.");
           return false;
         }
-        let messageHexLength = text.length - expectedIVHexLength;
-        if (messageHexLength % 4 !== 0) {
-          alert("The encrypted message must be a multiple of 4 hex digits.");
-          return false;
-        }
-        let plaintextLength = messageHexLength / 4;
+        let plaintextLength = text.length / 8;
         if (key.length < plaintextLength) {
           alert("For decryption, the key must be at least as long as the plaintext.");
           return false;
@@ -123,17 +116,22 @@
     }
   
     // Decrypt:
-    // 1. Extract the IV from the beginning of the ciphertext.
-    // 2. Use the IV and the key to XOR-decrypt the rest of the ciphertext.
+    // 1. Determine the plaintext length from the ciphertext.
+    //    Since the ciphertext is (IV + encrypted message) and each character is 4 hex digits,
+    //    the total length is 8 * (plaintext length). Thus, plaintextLength = ciphertext.length / 8.
+    // 2. Extract the IV from the beginning of the ciphertext.
+    // 3. Use the IV and the key to XOR-decrypt the rest of the ciphertext.
     function decrypt() {
       const inputText = document.getElementById("inputText").value;
       const key = document.getElementById("keyInput").value;
   
       if (!validateLength(inputText, key, true)) return;
       
-      let plaintextLength = key.length; // We assume key length equals plaintext length.
-      let ivHexLength = plaintextLength * 4;
+      // Determine plaintext length from ciphertext.
+      let plaintextLength = inputText.length / 8;
   
+      // IV is the first plaintextLength characters (hex-encoded, so 4 digits per char)
+      let ivHexLength = plaintextLength * 4;
       const ivHex = inputText.substring(0, ivHexLength);
       const iv = fromHex(ivHex);
       const encryptedHex = inputText.substring(ivHexLength);
@@ -256,5 +254,4 @@
   </div>
 </body>
 </html>
-
 
